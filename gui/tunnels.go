@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -380,12 +379,12 @@ func (t *Tunnels) Create() error {
 						continue
 					}
 
-					data, err := ioutil.ReadFile(fname)
+					data, err := os.ReadFile(fname)
 					if err != nil {
 						return err
 					}
 
-					err = ioutil.WriteFile(filepath.Join(TunnelsPath, filepath.Base(fname)), data, 666)
+					err = os.WriteFile(filepath.Join(TunnelsPath, filepath.Base(fname)), data, 666)
 					if err != nil {
 						return err
 					}
@@ -606,7 +605,7 @@ func (t *Tunnels) Create() error {
 				return err
 			}
 
-			data, err := ioutil.ReadFile(path)
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
@@ -765,7 +764,7 @@ func (t *Tunnels) Create() error {
 			}
 
 			// write changes
-			if err := ioutil.WriteFile(path, []byte(data), 666); err != nil {
+			if err := os.WriteFile(path, []byte(data), 666); err != nil {
 				return err
 			}
 
@@ -1180,12 +1179,12 @@ func parseZipArchive(target string) error {
 			}
 			defer fr.Close()
 
-			data, err := ioutil.ReadAll(fr)
+			data, err := io.ReadAll(fr)
 			if err != nil {
 				return err
 			}
 
-			err = ioutil.WriteFile(filepath.Join(TunnelsPath, f.FileInfo().Name()), data, 666)
+			err = os.WriteFile(filepath.Join(TunnelsPath, f.FileInfo().Name()), data, 666)
 			if err != nil {
 				return err
 			}
