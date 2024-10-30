@@ -66,11 +66,25 @@ type Tunnels struct {
 	ticker            *time.Ticker
 
 	lastSelected string
+
+	grayIcon  *gtk.Image
+	greenIcon *gtk.Image
 }
 
 func (t *Tunnels) Create() error {
 	t.icons = map[string]*gtk.Image{}
 	t.ticker = time.NewTicker(1 * time.Second)
+
+	var err error
+	t.grayIcon, err = gtk.ImageNewFromFile(IconPath + "not_connected.png")
+	if err != nil {
+		return err
+	}
+
+	t.greenIcon, err = gtk.ImageNewFromFile(IconPath + "connected.png")
+	if err != nil {
+		return err
+	}
 
 	tl, err := get.ListBox("tunnel_list")
 	if err != nil {
@@ -219,13 +233,8 @@ func (t *Tunnels) Create() error {
 
 			// disconnect from given tunnel
 			dc := func(d *wgtypes.Device) error {
-				gray, err := gtk.ImageNewFromFile(IconPath + "not_connected.png")
-				if err != nil {
-					return err
-				}
-
 				glib.IdleAdd(func() {
-					t.icons[d.Name].SetFromPixbuf(gray.GetPixbuf())
+					t.icons[d.Name].SetFromPixbuf(t.grayIcon.GetPixbuf())
 				})
 
 				c := exec.Command("wg-quick", "down", d.Name)
@@ -303,14 +312,9 @@ func (t *Tunnels) Create() error {
 				header.SetSubtitle("Connected to " + strings.Join(activeNames, ", "))
 			})
 
-			green, err := gtk.ImageNewFromFile(IconPath + "connected.png")
-			if err != nil {
-				return err
-			}
-
 			// set icon to connected for the tunnel's row
 			glib.IdleAdd(func() {
-				t.icons[name].SetFromPixbuf(green.GetPixbuf())
+				t.icons[name].SetFromPixbuf(t.greenIcon.GetPixbuf())
 				t.UpdateRow(row)
 				indicator.SetIcon("wg_connected")
 			})
@@ -1040,14 +1044,13 @@ func (t *Tunnels) ScanTunnels() error {
 		var img *gtk.Image
 
 		if dry.StringListContains(activeNames, name) {
-			green, err := gtk.ImageNewFromFile(IconPath + "connected.png")
+			green, err := gtk.ImageNewFromPixbuf(t.greenIcon.GetPixbuf())
 			if err != nil {
 				return err
 			}
-
 			img = green
 		} else {
-			gray, err := gtk.ImageNewFromFile(IconPath + "not_connected.png")
+			gray, err := gtk.ImageNewFromPixbuf(t.grayIcon.GetPixbuf())
 			if err != nil {
 				return err
 			}
