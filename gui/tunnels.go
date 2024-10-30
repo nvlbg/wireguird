@@ -833,9 +833,35 @@ func (t *Tunnels) Create() error {
 		for {
 			<-t.ticker.C
 
-			if !window.HasToplevelFocus() {
+			// update tray icon
+			activeNames := t.ActiveDeviceName()
+			if len(activeNames) == 0 {
+				indicator.SetIcon("wireguard_off")
+			} else {
+				indicator.SetIcon("wg_connected")
+			}
+
+			if !window.IsVisible() {
 				continue
 			}
+
+			glib.IdleAdd(func() {
+				// update list icons
+				for name := range t.icons {
+					if dry.StringListContains(activeNames, name) {
+						t.icons[name].SetFromPixbuf(t.greenIcon.GetPixbuf())
+					} else {
+						t.icons[name].SetFromPixbuf(t.grayIcon.GetPixbuf())
+					}
+				}
+
+				// update header label with tunnel names
+				if len(activeNames) == 0 {
+					header.SetSubtitle("Not connected!")
+				} else {
+					header.SetSubtitle("Connected to " + strings.Join(activeNames, ", "))
+				}
+			})
 
 			row := tl.GetSelectedRow()
 			if row == nil {
@@ -849,7 +875,15 @@ func (t *Tunnels) Create() error {
 				continue
 			}
 
-			if !dry.StringListContains(t.ActiveDeviceName(), name) {
+			if !dry.StringListContains(activeNames, name) {
+				glib.IdleAdd(func() {
+					t.Interface.Status.SetText("Inactive")
+					t.Interface.PublicKey.SetText("unknown")
+					t.Interface.ListenPort.SetText("unknown")
+					t.ButtonChangeState.SetLabel("Activate")
+					t.Peer.LatestHandshake.SetText("unknown")
+					t.Peer.Transfer.SetText("unknown")
+				})
 				continue
 			}
 
@@ -859,16 +893,18 @@ func (t *Tunnels) Create() error {
 				continue
 			}
 
-			t.Interface.PublicKey.SetText(d.PublicKey.String())
-			t.Interface.ListenPort.SetText(strconv.Itoa(d.ListenPort))
+			glib.IdleAdd(func() {
+				t.Interface.Status.SetText("Active")
+				t.Interface.PublicKey.SetText(d.PublicKey.String())
+				t.Interface.ListenPort.SetText(strconv.Itoa(d.ListenPort))
+				t.ButtonChangeState.SetLabel("Deactivate")
 
-			for _, p := range d.Peers {
-				hs := humanize.Time(p.LastHandshakeTime)
-				glib.IdleAdd(func() {
+				for _, p := range d.Peers {
+					hs := humanize.Time(p.LastHandshakeTime)
 					t.Peer.LatestHandshake.SetText(hs)
 					t.Peer.Transfer.SetText(humanize.Bytes(uint64(p.ReceiveBytes)) + " received, " + humanize.Bytes(uint64(p.TransmitBytes)) + " sent")
-				})
-			}
+				}
+			})
 		}
 	}()
 
