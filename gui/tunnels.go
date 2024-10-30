@@ -302,10 +302,6 @@ func (t *Tunnels) Create() error {
 				return errors.New(oerr)
 			}
 
-			if err != nil {
-				return err
-			}
-
 			// update header label with tunnel names
 			glib.IdleAdd(func() {
 				activeNames := t.ActiveDeviceName()
