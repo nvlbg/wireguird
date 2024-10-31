@@ -14,9 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ungerik/go-dry"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
-
 	"github.com/UnnoTed/wireguird/gui/get"
 	"github.com/UnnoTed/wireguird/settings"
 	"github.com/dustin/go-humanize"
@@ -24,6 +21,7 @@ import (
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
 	"github.com/rs/zerolog/log"
+	"github.com/ungerik/go-dry"
 	"gopkg.in/ini.v1"
 )
 
@@ -208,12 +206,6 @@ func (t *Tunnels) Create() error {
 
 	t.ButtonChangeState.Connect("clicked", func() {
 		err := func() error {
-			list, err := wgc.Devices()
-			if err != nil {
-				return err
-			}
-
-			activeNames := t.ActiveDeviceName()
 			row := tl.GetSelectedRow()
 			// row not found for config
 			if row == nil {
@@ -226,99 +218,11 @@ func (t *Tunnels) Create() error {
 				return err
 			}
 
-			// https://github.com/UnnoTed/wireguird/issues/11#issuecomment-1332047191
-			if len(name) >= 16 {
-				ShowError(window, errors.New("Tunnel's file name is too long ("+strconv.Itoa(len(name))+"), max length: 15"))
-			}
-
-			// disconnect from given tunnel
-			dc := func(d *wgtypes.Device) error {
-				glib.IdleAdd(func() {
-					t.icons[d.Name].SetFromPixbuf(t.grayIcon.GetPixbuf())
-				})
-
-				c := exec.Command("wg-quick", "down", d.Name)
-				output, err := c.Output()
-				if err != nil {
-					es := string(err.(*exec.ExitError).Stderr)
-					log.Error().Err(err).Str("output", string(output)).Str("error", es).Msg("wg-quick down error")
-
-					oerr := err.Error() + "\nwg-quick's output:\n" + es
-					wlog("ERROR", oerr)
-					return errors.New(oerr)
-				}
-
-				indicator.SetIcon("wireguard_off")
-				return wlog("INFO", "Disconnected from "+d.Name)
-			}
-
-			// disconnects from all tunnels before connecting to a new one
-			// when the multipleTunnels option is disabled
-			if Settings.MultipleTunnels {
-				log.Info().Str("name", name).Msg("NAME")
-				d, err := wgc.Device(name)
-				if err != nil && !errors.Is(err, os.ErrNotExist) {
-					return err
-				}
-
-				if !errors.Is(err, os.ErrNotExist) {
-					if err := dc(d); err != nil {
-						return err
-					}
-				}
-
-			} else {
-				for _, d := range list {
-					if err := dc(d); err != nil {
-						return err
-					}
-				}
-			}
-
-			// dont connect to the new one as this is a disconnect action
-			if dry.StringListContains(activeNames, name) {
-				t.UpdateRow(row)
-
-				glib.IdleAdd(func() {
-					if len(activeNames) == 1 {
-						header.SetSubtitle("Not connected!")
-					} else {
-						activeNames := t.ActiveDeviceName()
-						header.SetSubtitle("Connected to " + strings.Join(activeNames, ", "))
-					}
-				})
-				return nil
-			}
-
-			// connect to a tunnel
-			c := exec.Command("wg-quick", "up", name)
-			output, err := c.Output()
-			if err != nil {
-				es := string(err.(*exec.ExitError).Stderr)
-				log.Error().Err(err).Str("output", string(output)).Str("error", es).Msg("wg-quick up error")
-
-				oerr := err.Error() + "\nwg-quick's output:\n" + es
-				wlog("ERROR", oerr)
-				return errors.New(oerr)
-			}
-
-			// update header label with tunnel names
-			glib.IdleAdd(func() {
-				activeNames := t.ActiveDeviceName()
-				header.SetSubtitle("Connected to " + strings.Join(activeNames, ", "))
-			})
-
-			// set icon to connected for the tunnel's row
-			glib.IdleAdd(func() {
-				t.icons[name].SetFromPixbuf(t.greenIcon.GetPixbuf())
-				t.UpdateRow(row)
-				indicator.SetIcon("wg_connected")
-			})
-
-			if err := wlog("INFO", "Connected to "+name); err != nil {
+			if err := t.ToggleTunnel(name); err != nil {
 				return err
 			}
 
+			t.UpdateRow(row)
 			return nil
 		}()
 
@@ -909,6 +813,102 @@ func (t *Tunnels) Create() error {
 	}()
 
 	return nil
+}
+
+func (t *Tunnels) ToggleTunnel(name string) error {
+	if len(name) >= 16 {
+		ShowError(window, errors.New("Tunnel's file name is too long ("+strconv.Itoa(len(name))+"), max length: 15"))
+	}
+
+	defer func() {
+		activeNames := t.ActiveDeviceName()
+		if len(activeNames) == 0 {
+			indicator.SetIcon("wireguard_off")
+			glib.IdleAdd(func() {
+				header.SetSubtitle("Not connected!")
+			})
+		} else {
+			indicator.SetIcon("wg_connected")
+			glib.IdleAdd(func() {
+				header.SetSubtitle("Connected to " + strings.Join(activeNames, ", "))
+			})
+		}
+	}()
+
+	isConnected, err := t.IsTunnelConnected(name)
+	if err != nil {
+		return err
+	}
+
+	if Settings.MultipleTunnels {
+		if isConnected {
+			return t.DisconnectTunnel(name)
+		} else {
+			return t.ConnectTunnel(name)
+		}
+	} else {
+		// disconnect from all active tunnels
+		devices, err := wgc.Devices()
+		if err != nil {
+			return err
+		}
+		for _, d := range devices {
+			if err := t.DisconnectTunnel(d.Name); err != nil {
+				return err
+			}
+		}
+
+		if !isConnected {
+			return t.ConnectTunnel(name)
+		}
+		return nil
+	}
+}
+
+func (t *Tunnels) DisconnectTunnel(name string) error {
+	c := exec.Command("wg-quick", "down", name)
+	output, err := c.Output()
+	if err != nil {
+		es := string(err.(*exec.ExitError).Stderr)
+		log.Error().Err(err).Str("output", string(output)).Str("error", es).Msg("wg-quick down error")
+
+		oerr := err.Error() + "\nwg-quick's output:\n" + es
+		wlog("ERROR", oerr)
+		return errors.New(oerr)
+	}
+
+	glib.IdleAdd(func() {
+		t.icons[name].SetFromPixbuf(t.grayIcon.GetPixbuf())
+	})
+
+	return wlog("INFO", "Disconnected from "+name)
+}
+
+func (t *Tunnels) ConnectTunnel(name string) error {
+	c := exec.Command("wg-quick", "up", name)
+	output, err := c.Output()
+	if err != nil {
+		es := string(err.(*exec.ExitError).Stderr)
+		log.Error().Err(err).Str("output", string(output)).Str("error", es).Msg("wg-quick up error")
+
+		oerr := err.Error() + "\nwg-quick's output:\n" + es
+		wlog("ERROR", oerr)
+		return errors.New(oerr)
+	}
+
+	glib.IdleAdd(func() {
+		t.icons[name].SetFromPixbuf(t.greenIcon.GetPixbuf())
+	})
+
+	return wlog("INFO", "Connected to "+name)
+}
+
+func (t *Tunnels) IsTunnelConnected(name string) (bool, error) {
+	d, err := wgc.Device(name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	return err == nil && d != nil, nil
 }
 
 func (t *Tunnels) ToSettings() {
