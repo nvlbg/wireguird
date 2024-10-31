@@ -67,13 +67,27 @@ type Tunnels struct {
 
 	grayIcon  *gtk.Image
 	greenIcon *gtk.Image
+
+	menuTunnels            *gtk.MenuItem
+	tunnelsTrayMenuItems   map[string]*gtk.CheckMenuItem
+	tunnelsTrayMenuHandles map[string]glib.SignalHandle
 }
 
 func (t *Tunnels) Create() error {
-	t.icons = map[string]*gtk.Image{}
+	t.icons = make(map[string]*gtk.Image)
+	t.tunnelsTrayMenuItems = make(map[string]*gtk.CheckMenuItem)
+	t.tunnelsTrayMenuHandles = make(map[string]glib.SignalHandle)
 	t.ticker = time.NewTicker(1 * time.Second)
 
 	var err error
+	menu := indicator.GetMenu()
+	t.menuTunnels, err = gtk.MenuItemNewWithLabel("Tunnels")
+	if err != nil {
+		return err
+	}
+	menu.Add(t.menuTunnels)
+	menu.ReorderChild(t.menuTunnels, 1)
+
 	t.grayIcon, err = gtk.ImageNewFromFile(IconPath + "not_connected.png")
 	if err != nil {
 		return err
@@ -879,6 +893,10 @@ func (t *Tunnels) DisconnectTunnel(name string) error {
 
 	glib.IdleAdd(func() {
 		t.icons[name].SetFromPixbuf(t.grayIcon.GetPixbuf())
+		menuItem := t.tunnelsTrayMenuItems[name]
+		menuItem.HandlerBlock(t.tunnelsTrayMenuHandles[name])
+		menuItem.SetActive(false)
+		menuItem.HandlerUnblock(t.tunnelsTrayMenuHandles[name])
 	})
 
 	return wlog("INFO", "Disconnected from "+name)
@@ -898,6 +916,10 @@ func (t *Tunnels) ConnectTunnel(name string) error {
 
 	glib.IdleAdd(func() {
 		t.icons[name].SetFromPixbuf(t.greenIcon.GetPixbuf())
+		menuItem := t.tunnelsTrayMenuItems[name]
+		menuItem.HandlerBlock(t.tunnelsTrayMenuHandles[name])
+		menuItem.SetActive(true)
+		menuItem.HandlerUnblock(t.tunnelsTrayMenuHandles[name])
 	})
 
 	return wlog("INFO", "Connected to "+name)
@@ -1058,6 +1080,11 @@ func (t *Tunnels) ScanTunnels() error {
 	activeNames := t.ActiveDeviceName()
 	header.SetSubtitle("Connected to " + strings.Join(activeNames, ", "))
 
+	tunnelsMenu, err := gtk.MenuNew()
+	if err != nil {
+		return err
+	}
+
 	lasti := len(configList) - 1
 	for i, name := range configList {
 		row, err := gtk.ListBoxRowNew()
@@ -1073,6 +1100,18 @@ func (t *Tunnels) ScanTunnels() error {
 			row.SetMarginBottom(8)
 		}
 
+		menuItem, err := gtk.CheckMenuItemNewWithLabel(name)
+		if err != nil {
+			return err
+		}
+		tunnelsMenu.Add(menuItem)
+		tunnelName := name // this new variable is necessary - https://go.dev/blog/loopvar-preview
+		handle := menuItem.Connect("toggled", func() {
+			t.ToggleTunnel(tunnelName)
+		})
+		t.tunnelsTrayMenuItems[name] = menuItem
+		t.tunnelsTrayMenuHandles[name] = handle
+
 		var img *gtk.Image
 
 		if dry.StringListContains(activeNames, name) {
@@ -1081,12 +1120,18 @@ func (t *Tunnels) ScanTunnels() error {
 				return err
 			}
 			img = green
+			menuItem.HandlerBlock(handle)
+			menuItem.SetActive(true)
+			menuItem.HandlerUnblock(handle)
 		} else {
 			gray, err := gtk.ImageNewFromPixbuf(t.grayIcon.GetPixbuf())
 			if err != nil {
 				return err
 			}
 			img = gray
+			menuItem.HandlerBlock(handle)
+			menuItem.SetActive(false)
+			menuItem.HandlerUnblock(handle)
 		}
 
 		t.icons[name] = img
@@ -1134,6 +1179,9 @@ func (t *Tunnels) ScanTunnels() error {
 			t.UpdateRow(row)
 		}
 	}
+
+	t.menuTunnels.SetSubmenu(tunnelsMenu)
+	indicator.GetMenu().ShowAll()
 
 	return nil
 }
